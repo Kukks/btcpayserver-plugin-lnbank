@@ -1,5 +1,4 @@
 @page "/plugins/lnbank/admin"
-@using Microsoft.AspNetCore.Mvc.TagHelpers
 @model BTCPayServer.Plugins.LNbank.Pages.Admin.IndexModel
 
 @{
@@ -13,7 +12,19 @@
         <div class="text-muted fw-semibold" id="LNbank-WalletBalance">
             <span data-sensitive>@Helpers.Sats(Model.TotalBalance)</span> in wallets total
         </div>
+
     </div>
+    @if (Model.IsReady)
+    {
+        <div class="d-flex gap-3">
+            <a asp-page="./BulkCreate" class="btn btn-primary">
+                Bulk Create
+            </a>
+            <a asp-page="./BoltBrr" class="btn btn-primary">
+                Bolt Brr
+            </a>
+        </div>
+    }
 </div>
 
 @if (Model.TotalNodeBalance < Model.TotalLiabilities)
@@ -24,7 +35,7 @@
     </div>
 }
 
-<partial name="_StatusMessage" />
+<partial name="_StatusMessage"/>
 
 @if (Model.WalletsByUserId.Any())
 {

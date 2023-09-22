@@ -24,5 +24,7 @@ public static class AppExtensions
         services.AddSingleton<AuthorizationRequirementHandler>();
         services.AddSingleton<ResolveLightningAddressHandler>();
         services.AddScoped<IAuthorizationHandler, LNbankAuthorizationHandler>();
+        services.AddSingleton<BoltCardService>();
+        services.AddHostedService(sp=> sp.GetRequiredService<BoltCardService>());
     }
 }
