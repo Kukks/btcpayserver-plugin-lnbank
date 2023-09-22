@@ -72,7 +72,7 @@ public class WalletService
                 WalletId = walletId,
                 InvoiceId = null,
                 Amount = amount,
-                PaymentRequest = null,
+                PaymentRequest = "internal",
                 PaymentHash = null,
                 Preimage = null,
                 Description = description,
