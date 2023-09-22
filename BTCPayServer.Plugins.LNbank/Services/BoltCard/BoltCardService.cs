@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations.Schema;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -16,11 +14,10 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 using NBitcoin.Altcoins.Elements;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Transaction = BTCPayServer.Plugins.LNbank.Data.Models.Transaction;
 
-namespace BTCPayServer.Plugins.LNbank.Services;
+namespace BTCPayServer.Plugins.LNbank.Services.BoltCard;
 
 public class BoltCardService : EventHostedServiceBase
 {
@@ -43,8 +40,8 @@ public class BoltCardService : EventHostedServiceBase
         _walletService = walletService;
     }
 
-    
     private readonly SemaphoreSlim _settingsSemaphore = new(1, 1);
+
     private async Task<BoltCardSettings> GetSettings()
     {
         await _settingsSemaphore.WaitAsync();
@@ -52,11 +49,10 @@ public class BoltCardService : EventHostedServiceBase
         settings ??= new BoltCardSettings();
         if (settings.MasterSeed is null)
         {
-            settings.MasterSeed = Convert.ToHexString(NBitcoin.RandomUtils.GetBytes(64));
+            settings.MasterSeed = Convert.ToHexString(RandomUtils.GetBytes(64));
             settings.LastIndexUsed = 0;
             settings.GroupSize = await ComputeGroupSize();
-            
-            
+
             await _settingsRepository.UpdateSetting(settings, nameof(BoltCardSettings));
         }
         _settingsSemaphore.Release();
@@ -75,14 +71,14 @@ public class BoltCardService : EventHostedServiceBase
             {
                 try
                 {
-
                     var key1 = RandomUtils.GetBytes(16);
-                    var result1 = BoltCardHelper.ExtractBoltCardFromRequest(
+                    BoltCardHelper.ExtractBoltCardFromRequest(
                         new Uri("https://test.com?p=4E2E289D945A66BB13377A728884E867&c=E19CCB1FED8892CE"),
-                        key1, out var _);
+                        key1, out _);
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
+                    // ignored
                 }
 
                 attempts++;
@@ -113,18 +109,17 @@ public class BoltCardService : EventHostedServiceBase
             k4 = Convert.ToHexString(
                 slip21Node.DeriveChild(index + "k4").Key.ToBytes().Take(16).ToArray())
         }).ToString();
-
     }
 
-    record IncrementDerivationIndexEvt(TaskCompletionSource<int> tcs);
-    
+    private record IncrementDerivationIndexEvt(TaskCompletionSource<int> tcs);
+
     protected override async Task ProcessEvent(object evt, CancellationToken cancellationToken)
     {
         // we use sequential processing of these to avoid race conditions such as two cards being issued with the same index or a counter check failing
         if (evt is IncrementDerivationIndexEvt incrementDerivationIndexEvt)
         {
             var settings = await GetSettings();
-            
+
             settings.LastIndexUsed++;
             await _settingsRepository.UpdateSetting(settings, nameof(BoltCardSettings));
             incrementDerivationIndexEvt.tcs.SetResult(settings.LastIndexUsed);
@@ -132,7 +127,7 @@ public class BoltCardService : EventHostedServiceBase
         await  base.ProcessEvent(evt, cancellationToken);
     }
 
-    private async Task<int> IncrementDerivationIndex(BoltCardSettings settings)
+    private async Task<int> IncrementDerivationIndex()
     {
         var tcs = new TaskCompletionSource<int>();
         PushEvent(new IncrementDerivationIndexEvt(tcs));
@@ -162,7 +157,7 @@ public class BoltCardService : EventHostedServiceBase
             throw new Exception("Withdraw config not found");
         }
 
-        var boltCard = new BoltCard()
+        var boltCard = new Data.Models.BoltCard
         {
             Counter = -1,
             WithdrawConfigId = withdrawConfigId,
@@ -173,7 +168,7 @@ public class BoltCardService : EventHostedServiceBase
         return boltCard.BoltCardId;
     }
 
-    public async Task<(BoltCard card, Slip21Node masterSeed, int group)> IssueCard(string activationCode)
+    public async Task<(Data.Models.BoltCard card, Slip21Node masterSeed, int group)> IssueCard(string activationCode)
     {
         await using var dbContext = _dbContextFactory.CreateContext();
 
@@ -185,47 +180,45 @@ public class BoltCardService : EventHostedServiceBase
             throw new Exception("Card not found or already activated");
 
         var settings = await GetSettings();
-        card.Index ??= await IncrementDerivationIndex(settings);
+        card.Index ??= await IncrementDerivationIndex();
         card.Status = BoltCardStatus.Active;
-        
+
         await dbContext.SaveChangesAsync();
         var index = (int) card.Index;
         var groupSize = settings.GroupSize;
         var groupNumber = index / groupSize;
         return (card, settings.Slip21Node(), groupNumber);
     }
-    
 
-    private ConcurrentDictionary<int, SemaphoreSlim> _verificationSemaphores = new();
+    private readonly ConcurrentDictionary<int, SemaphoreSlim> _verificationSemaphores = new();
 
-    
-    public async Task<(BoltCard, string authorizationCode)> VerifyTap(string url, int group, CancellationToken cancellationToken)
+    public async Task<(Data.Models.BoltCard, string authorizationCode)> VerifyTap(string url, int group, CancellationToken cancellationToken)
     {
         var settings = await GetSettings();
         var slipNode = settings.Slip21Node();
         var lowerBound = group * settings.GroupSize;
         var upperBound = lowerBound + settings.GroupSize - 1;
-        
-        
-        (string uid, uint counter, byte[] rawUid, byte[] rawCtr, byte[] c)? boltcardMatch = null;
+
+
+        (string uid, uint counter, byte[] rawUid, byte[] rawCtr, byte[] c)? boltCardMatch = null;
         int i;
         for (i = lowerBound; i <= upperBound; i++)
         {
             var k1 = slipNode.DeriveChild(i + "k1").Key.ToBytes().Take(16)
                 .ToArray();
-            boltcardMatch =
+            boltCardMatch =
                 BoltCardHelper.ExtractBoltCardFromRequest(new Uri(url), k1, out var error);
-            if (error is null && boltcardMatch is not null)
+            if (error is null && boltCardMatch is not null)
                 break;
             cancellationToken.ThrowIfCancellationRequested();
         }
-        
-        if(boltcardMatch is null)
+
+        if(boltCardMatch is null)
             throw new Exception("No matching card found");
-        
+
         var semaphore = _verificationSemaphores.GetOrAdd(i, new SemaphoreSlim(1, 1));
         await semaphore.WaitAsync(cancellationToken);  // Wait for the semaphore if it's locked by another task
-        BoltCard matchedCard;
+        Data.Models.BoltCard matchedCard;
         try
         {
             await using var dbContext = _dbContextFactory.CreateContext();
@@ -237,74 +230,40 @@ public class BoltCardService : EventHostedServiceBase
 
             if(matchedCard.Status != BoltCardStatus.Active)
                 throw new Exception("Card is not active", null);
-            
-            if(matchedCard.Counter >= boltcardMatch.Value.counter)
+
+            if(matchedCard.Counter >= boltCardMatch.Value.counter)
                 throw new Exception("Counter is too low", null);
 
-            matchedCard.CardIdentifier ??= boltcardMatch.Value.uid;
-            if(matchedCard.CardIdentifier != boltcardMatch.Value.uid)
+            matchedCard.CardIdentifier ??= boltCardMatch.Value.uid;
+            if(matchedCard.CardIdentifier != boltCardMatch.Value.uid)
                 throw new Exception("Card mismatch", null);
-            
+
             var k2 =  slipNode.DeriveChild(i + "k2").Key.ToBytes().Take(16)
                 .ToArray();
 
-            if (!BoltCardHelper.CheckCmac(boltcardMatch.Value.rawUid, boltcardMatch.Value.rawCtr, k2,
-                    boltcardMatch.Value.c, out var error2))
+            if (!BoltCardHelper.CheckCmac(boltCardMatch.Value.rawUid, boltCardMatch.Value.rawCtr, k2,
+                    boltCardMatch.Value.c, out var error2))
             {
                 throw new Exception($"C invalid: {error2}", null);
             }
-            matchedCard.Counter = (int)boltcardMatch.Value.counter;
+            matchedCard.Counter = (int)boltCardMatch.Value.counter;
             await dbContext.SaveChangesAsync(cancellationToken);
         }
         finally
         {
             semaphore.Release();
         }
-        
+
         var authorizationCode = Guid.NewGuid().ToString();
         _memoryCache.CreateEntry("BoltCardAuthorizationCode_" + authorizationCode).SetValue(matchedCard).AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
         return (matchedCard, authorizationCode);
     }
+
     public async Task<Transaction> HandleTapPayment(string authorizationCode, string paymentRequest)
     {
-        var card = _memoryCache.Get<BoltCard>("BoltCardAuthorizationCode_" + authorizationCode);
+        var card = _memoryCache.Get<Data.Models.BoltCard>("BoltCardAuthorizationCode_" + authorizationCode);
         if (card is null)
             throw new Exception("Invalid authorization code");
         return await _walletService.Send(card.WithdrawConfig, paymentRequest);
     }
-}
-
-public class BoltCard
-{
-    
-    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
-    public string BoltCardId { get; set; }
-    public string CardIdentifier { get; set; }
-    public int? Index { get; set; }
-    public BoltCardStatus Status { get; set; }
-    public string WithdrawConfigId { get; set; }
-    public WithdrawConfig WithdrawConfig { get; set; }
-    public long Counter { get; set; }
-
-    public static void OnModelCreating(ModelBuilder builder)
-    {
-        builder
-            .Entity<BoltCard>()
-            .HasIndex(o => o.WithdrawConfigId);
-
-        builder
-            .Entity<BoltCard>()
-            .HasOne(o => o.WithdrawConfig)
-            .WithOne(w => w.BoltCard)
-            .OnDelete(DeleteBehavior.Cascade);
-        
-        
-    }
-}
-
-public enum BoltCardStatus
-{
-    PendingActivation,
-    Active,
-    Inactive
 }

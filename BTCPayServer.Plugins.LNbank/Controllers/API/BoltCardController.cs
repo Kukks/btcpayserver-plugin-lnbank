@@ -6,6 +6,7 @@ using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Lightning;
 using BTCPayServer.Plugins.LNbank.Data.Models;
 using BTCPayServer.Plugins.LNbank.Services;
+using BTCPayServer.Plugins.LNbank.Services.BoltCard;
 using LNURL;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
