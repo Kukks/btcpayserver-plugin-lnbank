@@ -7,7 +7,6 @@ using BTCPayServer.Data;
 using BTCPayServer.Lightning;
 using BTCPayServer.Plugins.LNbank.Authentication;
 using BTCPayServer.Plugins.LNbank.Data.Models;
-using BTCPayServer.Plugins.LNbank.Services;
 using BTCPayServer.Plugins.LNbank.Services.BoltCard;
 using BTCPayServer.Plugins.LNbank.Services.Wallets;
 using Microsoft.AspNetCore.Authorization;
@@ -30,7 +29,7 @@ public class BulkCreateModel : BasePageModel
     [BindProperty]
     [DisplayName("Initial Balance")]
     [Range(0, 2100000000000)]
-    public long InitialBalance { get; set; } = 0;
+    public long InitialBalance { get; set; }
 
     [BindProperty]
     [DisplayName("How many wallets to create")]
@@ -63,7 +62,7 @@ public class BulkCreateModel : BasePageModel
         if (!ModelState.IsValid)
             return Page();
 
-        for (int i = 0; i < WalletsToCreate; i++)
+        for (var i = 1; i <= WalletsToCreate; i++)
         {
             var wallet = new Wallet
             {
@@ -75,13 +74,12 @@ public class BulkCreateModel : BasePageModel
 
             if (InitialBalance > 0)
             {
-                await WalletService.ActivatePrinter(wallet.WalletId, LightMoney.Satoshis(InitialBalance),
-                    "Initial balance", CancellationToken.None);
+                await WalletService.TopUp(wallet.WalletId, LightMoney.Satoshis(InitialBalance), "Initial balance");
             }
 
             if (InitBoltCard)
             {
-                var wc = await _withdrawConfigRepository.AddWithdrawConfig(new WithdrawConfig()
+                var wc = await _withdrawConfigRepository.AddWithdrawConfig(new WithdrawConfig
                 {
                     WalletId = wallet.WalletId,
                     ReuseType = WithdrawConfigReuseType.Unlimited,
@@ -90,7 +88,6 @@ public class BulkCreateModel : BasePageModel
                 await _boltCardService.CreateCard(wc.WithdrawConfigId);
             }
         }
-
 
         TempData[WellKnownTempData.SuccessMessage] = "Wallets successfully created.";
         return RedirectToPage("./Index");

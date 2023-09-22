@@ -116,7 +116,6 @@ public class BoltCardController : ControllerBase
         Reason = reason
     };
 
-
     private LNURLWithdrawRequest GetWithdrawRequest(WithdrawConfig withdrawConfig, string authorizationCode)
     {
         var remaining = withdrawConfig.GetRemainingBalance();
@@ -129,7 +128,6 @@ public class BoltCardController : ControllerBase
             MinWithdrawable = remaining > oneSat ? oneSat : LightMoney.Zero,
             MaxWithdrawable = remaining,
             CurrentBalance = remaining,
-            // BalanceCheck = thisUri,
             Callback = new Uri(Url.Action("BoltCardPayCallback", "BoltCard", null, Request.Scheme))
         };
         return request;

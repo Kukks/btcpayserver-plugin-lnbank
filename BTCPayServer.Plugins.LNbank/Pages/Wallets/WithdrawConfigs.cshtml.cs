@@ -151,6 +151,7 @@ public class WithdrawConfigsModel : BasePageModel
         WithdrawConfigs = await GetWithdrawConfigs();
         return Page();
     }
+
     public async Task<IActionResult> OnGetReactivateBoltAsync(string walletId, string withdrawConfigId)
     {
         if (CurrentWallet == null)
@@ -181,8 +182,6 @@ public class WithdrawConfigsModel : BasePageModel
         return Page();
     }
 
-    
-    
     private async Task<IEnumerable<WithdrawConfig>> GetWithdrawConfigs()
     {
         return await _withdrawConfigRepository.GetWithdrawConfigs(new WithdrawConfigsQuery

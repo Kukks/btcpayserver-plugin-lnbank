@@ -61,9 +61,9 @@ public class CreateModel : BasePageModel
         if (InitialBalance > 0 && (await _authorizationService.AuthorizeAsync(User, null,
                 new PolicyRequirement(LNbankPolicies.CanManageLNbank))).Succeeded)
         {
-            await WalletService.ActivatePrinter(Wallet.WalletId, LightMoney.Satoshis(InitialBalance), "Initial balance", CancellationToken.None );
+            await WalletService.TopUp(Wallet.WalletId, LightMoney.Satoshis(InitialBalance), "Initial balance");
         }
-        
+
         if (!string.IsNullOrEmpty(ReturnUrl) && Url.IsLocalUrl(ReturnUrl))
         {
             return Redirect(ReturnUrl + $"?LNbankWallet={Wallet.WalletId}");

@@ -2,7 +2,7 @@
 @model BTCPayServer.Plugins.LNbank.Pages.Admin.IndexModel
 
 @{
-    ViewData.SetActivePage(LNbankNavPages.Admin, "LNbank Administration");
+    ViewData.SetActivePage(LNbankNavPages.AdminWallets, "LNbank Administration");
 }
 
 <div class="sticky-header-setup"></div>
@@ -12,20 +12,13 @@
         <div class="text-muted fw-semibold" id="LNbank-WalletBalance">
             <span data-sensitive>@Helpers.Sats(Model.TotalBalance)</span> in wallets total
         </div>
-
     </div>
-    @if (Model.IsReady)
-    {
-        <div class="d-flex gap-3">
-            <a asp-page="./BulkCreate" class="btn btn-primary">
-                Bulk Create
-            </a>
-            <a asp-page="./BoltBrr" class="btn btn-primary">
-                Bolt Brr
-            </a>
-        </div>
-    }
 </div>
+
+@if (Model.IsReady)
+{
+    <partial name="_Nav" model="Model.CurrentWallet"/>
+}
 
 @if (Model.TotalNodeBalance < Model.TotalLiabilities)
 {
