@@ -86,7 +86,7 @@ public class BoltCardController : ControllerBase
                     card.masterSeed.DeriveChild(card.card.Index + "k4").Key.ToBytes().Take(16).ToArray()),
                 LNURLW = Url.Action("BoltCardPay", "BoltCard", new
                 {
-                    card.group
+                    group =  card.group == 0? (int?) null: card.group
                 }, "lnurlw")
             });
         }
