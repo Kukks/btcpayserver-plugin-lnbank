@@ -14,8 +14,8 @@
 {
     <p>This wallet still has a balance. Please <a asp-page="./Send" asp-route-walletId="@Model.CurrentWallet.WalletId">transfer the funds</a> before deleting it.</p>
 
-    <p>As an admin, you can override this requirement and delete anyway.</p>
     <form method="post" permission="@LNbankPolicies.CanManageLNbank">
+        <p>As an admin, you can override this requirement and delete anyway.</p>
         <input type="submit" value="Delete" class="btn btn-danger" id="LNbank-Delete"/>
     </form>
 }
