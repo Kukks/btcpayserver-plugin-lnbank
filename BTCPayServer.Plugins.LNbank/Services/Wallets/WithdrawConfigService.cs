@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -12,12 +11,12 @@ namespace BTCPayServer.Plugins.LNbank.Services.Wallets;
 public class WithdrawConfigService
 {
     private readonly WalletRepository _walletRepository;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _balanceSemaphores = new();
+    private readonly AsyncDuplicateLock _asyncDuplicateLock;
 
-    public WithdrawConfigService(
-        WalletRepository walletRepository)
+    public WithdrawConfigService(WalletRepository walletRepository, AsyncDuplicateLock asyncDuplicateLock)
     {
         _walletRepository = walletRepository;
+        _asyncDuplicateLock = asyncDuplicateLock;
     }
 
     private ICollection<Transaction> GetPaymentsInInterval(WithdrawConfig withdrawConfig)
@@ -53,9 +52,7 @@ public class WithdrawConfigService
     public async Task<LightMoney> GetRemainingBalance(WithdrawConfig withdrawConfig, bool total = false, CancellationToken cancellationToken = default)
     {
         var walletBalance = await _walletRepository.GetBalance(withdrawConfig.Wallet, cancellationToken);
-
-        var semaphore = _balanceSemaphores.GetOrAdd(withdrawConfig.WithdrawConfigId, new SemaphoreSlim(1, 1));
-        await semaphore.WaitAsync(cancellationToken);
+        using var walletLock = await _asyncDuplicateLock.LockAsync(withdrawConfig.Wallet.WalletId, cancellationToken);
 
         var hasTotalLimit = withdrawConfig.MaxTotal != null && withdrawConfig.MaxTotal > LightMoney.Zero;
         var hasPerUseLimit = withdrawConfig.MaxPerUse != null && withdrawConfig.MaxPerUse > LightMoney.Zero;
@@ -84,8 +81,6 @@ public class WithdrawConfigService
         {
             remainingMinusFee = walletBalance;
         }
-
-        semaphore.Release();
 
         return Math.Min(remainingMinusFee, walletBalance);
     }

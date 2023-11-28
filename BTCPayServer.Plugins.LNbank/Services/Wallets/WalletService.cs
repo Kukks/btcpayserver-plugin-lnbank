@@ -1,6 +1,5 @@
 #nullable enable
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -26,13 +25,13 @@ public class WalletService
     public static readonly TimeSpan ExpiryDefault = TimeSpan.FromDays(1);
     private readonly BTCPayService _btcpayService;
     private readonly LNURLService _lnurlService;
+    private readonly AsyncDuplicateLock _asyncDuplicateLock;
     private readonly ILogger _logger;
     private readonly Network _network;
     private readonly IHubContext<TransactionHub> _transactionHub;
     private readonly WalletRepository _walletRepository;
     private readonly WithdrawConfigService _withdrawConfigService;
     private readonly WithdrawConfigRepository _withdrawConfigRepository;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _balanceSemaphores = new();
 
     public WalletService(
         BTCPayService btcpayService,
@@ -42,13 +41,15 @@ public class WalletService
         WithdrawConfigService withdrawConfigService,
         WithdrawConfigRepository withdrawConfigRepository,
         WalletRepository walletRepository,
-        LNURLService lnurlService)
+        LNURLService lnurlService,
+        AsyncDuplicateLock asyncDuplicateLock)
     {
         _logger = logger;
         _btcpayService = btcpayService;
         _transactionHub = transactionHub;
         _walletRepository = walletRepository;
         _lnurlService = lnurlService;
+        _asyncDuplicateLock = asyncDuplicateLock;
         _withdrawConfigService = withdrawConfigService;
         _withdrawConfigRepository = withdrawConfigRepository;
         _network = btcPayNetworkProvider.GetNetwork<BTCPayNetwork>(BTCPayService.CryptoCode).NBitcoinNetwork;
@@ -162,41 +163,35 @@ public class WalletService
         if (amount == null)
             throw new ArgumentException("Amount must be defined.", nameof(amount));
 
-        var semaphore = GetBalanceSemaphore(wallet.WalletId);
-        await semaphore.WaitAsync(cancellationToken);
-        try
+        using var semaphore = await _asyncDuplicateLock.LockAsync(wallet.WalletId, cancellationToken);
+        var balance = await GetBalance(wallet);
+        if (balance < amount)
         {
-            var balance = await GetBalance(wallet);
-            if (balance < amount)
-            {
-                throw new InsufficientBalanceException($"Insufficient balance: {Sats(balance)} — tried to send {Sats(amount)}.");
-            }
-
-            // check if the invoice exists already
-            var paymentRequest = bolt11.ToString();
-            var receivingTransaction = await ValidatePaymentRequest(paymentRequest);
-            var isInternal = !string.IsNullOrEmpty(receivingTransaction?.InvoiceId);
-            var sendingTransaction = new Transaction
-            {
-                WalletId = wallet.WalletId,
-                PaymentRequest = paymentRequest,
-                PaymentHash = bolt11.PaymentHash?.ToString(),
-                ExpiresAt = bolt11.ExpiryDate,
-                Description = description,
-                Amount = amount,
-                AmountSettled = new LightMoney(amount.MilliSatoshi * -1),
-                WithdrawConfigId = withdrawConfigId
-            };
-
-            var transaction = await (isInternal && receivingTransaction != null
-                ? SendInternal(sendingTransaction, receivingTransaction, cancellationToken)
-                : SendExternal(sendingTransaction, amount, balance, maxFeePercent, cancellationToken));
-            return transaction;
+            throw new InsufficientBalanceException(
+                $"Insufficient balance: {Sats(balance)} — tried to send {Sats(amount)}.");
         }
-        finally
+
+        // check if the invoice exists already
+        var paymentRequest = bolt11.ToString();
+        var receivingTransaction = await ValidatePaymentRequest(paymentRequest);
+        var isInternal = !string.IsNullOrEmpty(receivingTransaction?.InvoiceId);
+        var sendingTransaction = new Transaction
         {
-            semaphore.Release();
-        }
+            WalletId = wallet.WalletId,
+            PaymentRequest = paymentRequest,
+            PaymentHash = bolt11.PaymentHash?.ToString(),
+            ExpiresAt = bolt11.ExpiryDate,
+            Description = description,
+            Amount = amount,
+            AmountSettled = new LightMoney(amount.MilliSatoshi * -1),
+            WithdrawConfigId = withdrawConfigId
+        };
+
+        var transaction = await (isInternal && receivingTransaction != null
+            ? SendInternal(sendingTransaction, receivingTransaction, cancellationToken)
+            : SendExternal(sendingTransaction, amount, balance, maxFeePercent, cancellationToken));
+        return transaction;
+
     }
 
     private async Task<Transaction> SendInternal(Transaction sendingTransaction, Transaction receivingTransaction,
@@ -470,11 +465,6 @@ public class WalletService
     public async Task<LightMoney> GetLiabilitiesTotal()
     {
         return await _walletRepository.GetLiabilitiesTotal();
-    }
-
-    public SemaphoreSlim GetBalanceSemaphore(string walletId)
-    {
-        return _balanceSemaphores.GetOrAdd(walletId, new SemaphoreSlim(1, 1));
     }
 
     private async Task BroadcastTransactionUpdate(Transaction transaction, string eventName)

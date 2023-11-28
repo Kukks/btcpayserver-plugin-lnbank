@@ -21,12 +21,12 @@ namespace BTCPayServer.Plugins.LNbank.Services.BoltCard;
 
 public class BoltCardService : EventHostedServiceBase
 {
-    private readonly ConcurrentDictionary<int, SemaphoreSlim> _verificationSemaphores = new();
     private readonly SemaphoreSlim _settingsSemaphore = new(1, 1);
     private readonly ISettingsRepository _settingsRepository;
     private readonly LNbankPluginDbContextFactory _dbContextFactory;
     private readonly IMemoryCache _memoryCache;
     private readonly WalletService _walletService;
+    private readonly AsyncDuplicateLock _asyncDuplicateLock;
     private readonly WithdrawConfigRepository _withdrawConfigRepository;
 
     public BoltCardService(
@@ -36,12 +36,14 @@ public class BoltCardService : EventHostedServiceBase
         LNbankPluginDbContextFactory dbContextFactory,
         WithdrawConfigRepository withdrawConfigRepository,
         IMemoryCache memoryCache,
-        WalletService walletService) : base(eventAggregator, logger)
+        WalletService walletService,
+        AsyncDuplicateLock asyncDuplicateLock) : base(eventAggregator, logger)
     {
         _settingsRepository = settingsRepository;
         _dbContextFactory = dbContextFactory;
         _memoryCache = memoryCache;
         _walletService = walletService;
+        _asyncDuplicateLock = asyncDuplicateLock;
         _withdrawConfigRepository = withdrawConfigRepository;
     }
 
@@ -205,13 +207,11 @@ public class BoltCardService : EventHostedServiceBase
         if (boltCardMatch is null)
             throw new Exception("No matching card found");
 
-        var semaphore = _verificationSemaphores.GetOrAdd(i, new SemaphoreSlim(1, 1));
-        await semaphore.WaitAsync(cancellationToken); // Wait for the semaphore if it's locked by another task
+        using var verificationLock = await _asyncDuplicateLock.LockAsync(i, cancellationToken);
 
         var boltCard = boltCardMatch.Value;
         Data.Models.BoltCard matchedCard;
-        try
-        {
+
             await using var dbContext = _dbContextFactory.CreateContext();
 
             matchedCard = await dbContext.BoltCards
@@ -240,11 +240,6 @@ public class BoltCardService : EventHostedServiceBase
             }
             matchedCard.Counter = (int)boltCard.counter;
             await dbContext.SaveChangesAsync(cancellationToken);
-        }
-        finally
-        {
-            semaphore.Release();
-        }
 
         var authorizationCode = Guid.NewGuid().ToString();
         _memoryCache.Set(GetCacheKey(authorizationCode), matchedCard.WithdrawConfigId, TimeSpan.FromMinutes(5));
