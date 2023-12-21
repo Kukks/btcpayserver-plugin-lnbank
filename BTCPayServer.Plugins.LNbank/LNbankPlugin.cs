@@ -1,7 +1,10 @@
 using System;
+using System.Linq;
+using System.Net.Http;
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Abstractions.Services;
+using BTCPayServer.Lightning;
 using BTCPayServer.Plugins.LNbank.Data;
 using BTCPayServer.Plugins.LNbank.Extensions;
 using BTCPayServer.Plugins.LNbank.Hooks;
@@ -37,6 +40,9 @@ public class LNbankPlugin : BaseBTCPayServerPlugin
         services.AddAppServices();
         services.AddAppAuthentication();
         services.AddAppAuthorization();
+        ILightningConnectionStringHandler ImplementationInstance(HttpClient client) => new LNBankConnectionStringHandlerOverride(client);
+        var overrideServiceDescriptor = new ServiceDescriptor(typeof(Func<HttpClient, ILightningConnectionStringHandler>), ImplementationInstance, ServiceLifetime.Singleton);
+        services.Insert(0, overrideServiceDescriptor);
     }
 
     public override void Execute(IApplicationBuilder applicationBuilder,
